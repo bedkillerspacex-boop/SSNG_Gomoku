@@ -5,7 +5,8 @@
   "name": "SSNG Gomoku",
   "description": "A Fabric client-side Gomoku board that synchronizes moves through IRC private messages.",
   "authors": [
-    "bsk"
+    "bsk",
+    "ryorin"
   ],
   "contact": {},
   "license": "MIT",
