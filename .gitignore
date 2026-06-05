@@ -1,0 +1,12 @@
+.gradle/
+build/
+run/
+.idea/
+*.iml
+
+*.log
+hs_err_pid*
+replay_pid*
+
+*.class
+out/

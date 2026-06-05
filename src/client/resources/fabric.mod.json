@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "id": "ssng_gomoku",
+  "version": "${version}",
+  "name": "SSNG Gomoku",
+  "description": "A Fabric client-side Gomoku board that synchronizes moves through IRC private messages.",
+  "authors": [
+    "bsk"
+  ],
+  "contact": {},
+  "license": "MIT",
+  "icon": "assets/ssng_gomoku/icon.png",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "com.ssng.gomoku.SsngGomokuClient"
+    ]
+  },
+  "mixins": [
+    {
+      "config": "ssng_gomoku.mixins.json",
+      "environment": "client"
+    }
+  ],
+  "depends": {
+    "fabricloader": ">=0.18.4",
+    "minecraft": "~1.21.4",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}
