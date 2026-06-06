@@ -15,12 +15,15 @@ import java.util.regex.Pattern;
 public final class IrcProtocol {
     public static final String PREFIX = "SSNG1";
     private static final SecureRandom RANDOM = new SecureRandom();
+    private static final Pattern TOKEN_PATTERN = Pattern.compile("[A-Za-z0-9_.:-]+");
+    private static final Pattern IRC_NAME_PATTERN = Pattern.compile("[A-Za-z0-9_\\-]+");
     private static final Pattern IRC_TELL_PATTERN = Pattern.compile("\\b([A-Za-z0-9_\\-]+)\\s*->\\s*You\\s*:", Pattern.CASE_INSENSITIVE);
 
     private IrcProtocol() {
     }
 
     public static String encode(IrcMessage message) {
+        validateOutboundMessage(message);
         StringBuilder builder = new StringBuilder(PREFIX);
         appendField(builder, "v", message.v());
         appendField(builder, "type", message.type());
@@ -39,6 +42,9 @@ public final class IrcProtocol {
         try {
             Map<String, String> fields = parseFields(encoded);
             if (fields.isEmpty()) {
+                return Optional.empty();
+            }
+            if (!hasValidHeader(fields)) {
                 return Optional.empty();
             }
             Map<String, Object> payloadMap = new LinkedHashMap<>();
@@ -71,7 +77,7 @@ public final class IrcProtocol {
         if (prefixIndex < 0) {
             return Optional.empty();
         }
-        Optional<String> encodedPayload = extractPayload(cleanText, prefixIndex + "SSNG1".length());
+        Optional<String> encodedPayload = extractPayload(cleanText, prefixIndex);
         if (encodedPayload.isEmpty()) {
             return Optional.empty();
         }
@@ -83,10 +89,16 @@ public final class IrcProtocol {
         String sender = extractBuiltInSender(cleanText)
             .or(() -> extractSender(cleanText, senderRegex))
             .orElse(decoded.get().from());
+        if (!sender.equalsIgnoreCase(decoded.get().from())) {
+            return Optional.empty();
+        }
         return Optional.of(new InboundIrcMessage(sender, decoded.get()));
     }
 
     public static String tellCommand(String peerIrcName, IrcMessage message) {
+        if (!isIrcName(peerIrcName) || !peerIrcName.equalsIgnoreCase(message.to())) {
+            throw new IllegalArgumentException("unsafe IRC target");
+        }
         return ".irc chat $tell " + peerIrcName + " " + encode(message);
     }
 
@@ -193,6 +205,9 @@ public final class IrcProtocol {
     }
 
     private static void appendField(StringBuilder builder, String key, Object value) {
+        if (!isSafeKey(key)) {
+            throw new IllegalArgumentException("unsafe protocol key: " + key);
+        }
         builder.append('|').append(cleanField(key)).append('=').append(cleanField(value));
     }
 
@@ -208,9 +223,10 @@ public final class IrcProtocol {
 
     private static Map<String, String> parseFields(String encoded) {
         String text = encoded == null ? "" : encoded.trim();
-        if (text.startsWith(PREFIX)) {
-            text = text.substring(PREFIX.length());
+        if (!text.startsWith(PREFIX)) {
+            throw new IllegalArgumentException("missing protocol prefix");
         }
+        text = text.substring(PREFIX.length());
         if (text.startsWith("|")) {
             text = text.substring(1);
         }
@@ -218,14 +234,82 @@ public final class IrcProtocol {
         if (text.isBlank()) {
             return fields;
         }
-        for (String part : text.split("\\|")) {
+        for (String part : text.split("\\|", -1)) {
+            if (part.isEmpty()) {
+                throw new IllegalArgumentException("empty protocol field");
+            }
             int equals = part.indexOf('=');
             if (equals <= 0) {
-                continue;
+                throw new IllegalArgumentException("malformed protocol field");
             }
-            fields.put(part.substring(0, equals), part.substring(equals + 1));
+            String key = part.substring(0, equals);
+            String value = part.substring(equals + 1);
+            if (!isSafeKey(key) || fields.containsKey(key)) {
+                throw new IllegalArgumentException("invalid protocol key");
+            }
+            fields.put(key, value);
         }
         return fields;
+    }
+
+    private static void validateOutboundMessage(IrcMessage message) {
+        if (message == null) {
+            throw new IllegalArgumentException("message is required");
+        }
+        Map<String, String> fields = new LinkedHashMap<>();
+        fields.put("v", String.valueOf(message.v()));
+        fields.put("type", stringValue(message.type()));
+        fields.put("gameId", stringValue(message.gameId()));
+        fields.put("from", stringValue(message.from()));
+        fields.put("to", stringValue(message.to()));
+        fields.put("seq", String.valueOf(message.seq()));
+        fields.put("ts", String.valueOf(message.ts()));
+        if (!hasValidHeader(fields)) {
+            throw new IllegalArgumentException("invalid protocol header");
+        }
+        for (String key : message.payload().keySet()) {
+            if (!isSafePayloadKey(key)) {
+                throw new IllegalArgumentException("unsafe payload key: " + key);
+            }
+        }
+    }
+
+    private static boolean hasValidHeader(Map<String, String> fields) {
+        try {
+            int version = intValue(fields.get("v"));
+            String type = stringValue(fields.get("type"));
+            String game = stringValue(fields.get("gameId"));
+            String from = stringValue(fields.get("from"));
+            String to = stringValue(fields.get("to"));
+            int seq = intValue(fields.get("seq"));
+            long ts = longValue(fields.get("ts"));
+            boolean ack = "ack".equals(type);
+            return version == 1
+                && isToken(type)
+                && (ack || isToken(game))
+                && isIrcName(from)
+                && isIrcName(to)
+                && seq >= 0
+                && ts >= 0;
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    private static boolean isSafePayloadKey(String key) {
+        return isSafeKey(key) && !isHeaderField(key);
+    }
+
+    private static boolean isSafeKey(String key) {
+        return key != null && TOKEN_PATTERN.matcher(key).matches();
+    }
+
+    private static boolean isToken(String value) {
+        return value != null && TOKEN_PATTERN.matcher(value).matches();
+    }
+
+    private static boolean isIrcName(String value) {
+        return value != null && IRC_NAME_PATTERN.matcher(value).matches();
     }
 
     private static boolean isHeaderField(String key) {

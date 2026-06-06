@@ -1,12 +1,13 @@
 .gradle/
+.gradle-user-home/
+.idea/
 build/
 run/
-.idea/
-*.iml
+out/
 
+*.class
+*.iml
+*.jar
 *.log
 hs_err_pid*
 replay_pid*
-
-*.class
-out/

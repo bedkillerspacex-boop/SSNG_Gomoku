@@ -85,6 +85,11 @@ public final class GomokuBoard {
         }
     }
 
+    public String shortHash() {
+        String fullHash = hash();
+        return fullHash.length() >= 6 ? fullHash.substring(0, 6) : fullHash;
+    }
+
     private boolean hasFiveFrom(int x, int y, Stone stone) {
         return countLine(x, y, 1, 0, stone) >= 5
             || countLine(x, y, 0, 1, stone) >= 5

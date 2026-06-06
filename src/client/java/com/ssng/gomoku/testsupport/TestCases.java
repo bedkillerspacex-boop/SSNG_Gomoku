@@ -4,6 +4,7 @@ import com.ssng.gomoku.game.GomokuBoard;
 import com.ssng.gomoku.game.Stone;
 import com.ssng.gomoku.protocol.IrcMessage;
 import com.ssng.gomoku.protocol.IrcProtocol;
+import com.ssng.gomoku.protocol.JsonCodec;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -17,6 +18,11 @@ public final class TestCases {
         testChatScan();
         testIrcTellChatScan();
         testWrappedAndFormattedIrcTellChatScan();
+        testProtocolRejectsMalformedPackets();
+        testProtocolRejectsUnsafeOutboundFields();
+        testProtocolRejectsSenderMismatch();
+        testJsonCodecRejectsMalformedJson();
+        testJsonCodecRejectsNonFiniteNumbers();
         testColorAssignmentIsDeterministic();
         testGomokuWins();
         System.out.println("SSNG self-tests passed");
@@ -62,6 +68,45 @@ public final class TestCases {
         check(inbound.message().type().equals("invite"), "wrapped irc tell payload");
     }
 
+    private static void testProtocolRejectsMalformedPackets() {
+        check(IrcProtocol.decodePayload("v=1|type=move|gameId=gid|from=alice|to=bob|seq=1|ts=1").isEmpty(), "missing prefix rejected");
+        check(IrcProtocol.decodePayload("SSNG1|v=1|type=move|type=resign|gameId=gid|from=alice|to=bob|seq=1|ts=1").isEmpty(), "duplicate field rejected");
+        check(IrcProtocol.decodePayload("SSNG1|v=1|type=move|gameId=gid|from=alice|to=bob|seq=1|ts=1|").isEmpty(), "trailing empty field rejected");
+        check(IrcProtocol.decodePayload("SSNG1|v=1|type=bad type|gameId=gid|from=alice|to=bob|seq=1|ts=1").isEmpty(), "unsafe type rejected");
+    }
+
+    private static void testProtocolRejectsUnsafeOutboundFields() {
+        IrcMessage badType = new IrcMessage(1, "bad type", "gid", "alice", "bob", 1, 1L, Map.of());
+        expectThrows(() -> IrcProtocol.encode(badType), "outbound bad type rejected");
+
+        IrcMessage badTarget = new IrcMessage(1, "move", "gid", "alice", "bob", 1, 1L, Map.of());
+        expectThrows(() -> IrcProtocol.tellCommand("bob | injected", badTarget), "unsafe tell target rejected");
+
+        IrcMessage badPayloadKey = new IrcMessage(1, "move", "gid", "alice", "bob", 1, 1L, Map.of("bad key", 1));
+        expectThrows(() -> IrcProtocol.encode(badPayloadKey), "unsafe payload key rejected");
+    }
+
+    private static void testProtocolRejectsSenderMismatch() {
+        IrcMessage message = new IrcMessage(1, "invite", "gid", "alice", "local", 1, 123L, Map.of("nonceA", "n"));
+        String chat = "[S] [IRC] mallory -> You: " + IrcProtocol.encode(message);
+        check(IrcProtocol.scanChat(chat, "\\[([^\\]]+)\\]").isEmpty(), "chat sender mismatch rejected");
+    }
+
+    private static void testJsonCodecRejectsMalformedJson() {
+        expectThrows(() -> JsonCodec.parse("01"), "json leading zero rejected");
+        expectThrows(() -> JsonCodec.parse("1."), "json missing fraction digit rejected");
+        expectThrows(() -> JsonCodec.parse("\"bad\nstring\""), "json unescaped control rejected");
+
+        Object exponent = JsonCodec.parse("1.25e2");
+        check(exponent instanceof Double && ((Double) exponent).equals(125.0), "json exponent parsed");
+    }
+
+    private static void testJsonCodecRejectsNonFiniteNumbers() {
+        expectThrows(() -> JsonCodec.stringify(Double.NaN), "json NaN rejected");
+        expectThrows(() -> JsonCodec.stringify(Double.POSITIVE_INFINITY), "json infinity rejected");
+        check(JsonCodec.stringify(Map.of("n", 3)).equals("{\"n\":3}"), "json finite number accepted");
+    }
+
     private static void testColorAssignmentIsDeterministic() {
         IrcProtocol.ColorAssignment one = IrcProtocol.assignColors("gid", "a", "b", "alice", "bob");
         IrcProtocol.ColorAssignment two = IrcProtocol.assignColors("gid", "a", "b", "alice", "bob");
@@ -88,5 +133,14 @@ public final class TestCases {
         if (!condition) {
             throw new AssertionError(message);
         }
+    }
+
+    private static void expectThrows(Runnable action, String message) {
+        try {
+            action.run();
+        } catch (IllegalArgumentException expected) {
+            return;
+        }
+        throw new AssertionError(message);
     }
 }

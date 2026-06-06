@@ -219,7 +219,7 @@ public final class GomokuClientController {
             statusMessage = "没有可同步的对局";
             return;
         }
-        send("sync_request", Map.of("boardHash", board.hash(), "moveNo", board.moveNo()));
+        send("sync_request", Map.of("boardHash", board.shortHash(), "moveNo", board.moveNo()));
         statusMessage = "已请求重新同步";
     }
 
@@ -622,9 +622,10 @@ public final class GomokuClientController {
         }
         // 发送完整的棋盘状态
         Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("boardHash", board.hash());
+        payload.put("boardHash", board.shortHash());
         payload.put("moveNo", board.moveNo());
         payload.put("boardState", serializeBoardState());
+        payload.put("currentTurn", currentTurn.wireName()); // 添加当前回合信息
         send("sync", payload);
         statusMessage = "已发送同步数据";
     }
@@ -634,37 +635,71 @@ public final class GomokuClientController {
             return;
         }
         String receivedHash = String.valueOf(message.payload().getOrDefault("boardHash", ""));
-        int receivedMoveNo = intValue(message.payload().get("moveNo"));
         String boardState = String.valueOf(message.payload().getOrDefault("boardState", ""));
+        String receivedTurn = String.valueOf(message.payload().getOrDefault("currentTurn", ""));
 
-        // 如果哈希匹配，说明已经同步
-        if (receivedHash.equals(board.hash()) && receivedMoveNo == board.moveNo()) {
-            statusMessage = "棋盘已同步";
-            return;
-        }
-
-        // 恢复棋盘状态
+        // 强制用对方的状态覆盖本地状态
         if (deserializeBoardState(boardState)) {
-            statusMessage = "已同步棋盘";
+            // 恢复当前回合
+            Stone syncedTurn = Stone.fromWireName(receivedTurn);
+            if (syncedTurn != Stone.EMPTY) {
+                currentTurn = syncedTurn;
+            } else {
+                // 如果没有收到回合信息，根据 moveNo 推算
+                currentTurn = (board.moveNo() % 2 == 0) ? Stone.BLACK : Stone.WHITE;
+            }
+
+            // 用对方的哈希验证同步后的状态
+            String localHash = board.shortHash();
+            if (localHash.equals(receivedHash)) {
+                statusMessage = "同步成功，轮到" + (currentTurn == localStone ? "你" : "对方");
+            } else {
+                statusMessage = "同步后哈希不匹配，可能存在问题";
+            }
         } else {
-            statusMessage = "同步失败";
+            statusMessage = "同步失败：无法解析对方棋盘状态";
         }
     }
 
     private String serializeBoardState() {
-        StringBuilder sb = new StringBuilder();
-        sb.append(board.moveNo()).append(":");
+        StringBuilder raw = new StringBuilder();
         for (int y = 0; y < GomokuBoard.SIZE; y++) {
             for (int x = 0; x < GomokuBoard.SIZE; x++) {
                 Stone stone = board.get(x, y);
-                sb.append(switch (stone) {
+                raw.append(switch (stone) {
                     case EMPTY -> '.';
                     case BLACK -> 'B';
                     case WHITE -> 'W';
                 });
             }
         }
-        return sb.toString();
+
+        // 使用游程编码压缩
+        StringBuilder compressed = new StringBuilder();
+        compressed.append(board.moveNo()).append(":");
+
+        char current = raw.charAt(0);
+        int count = 1;
+
+        for (int i = 1; i < raw.length(); i++) {
+            if (raw.charAt(i) == current) {
+                count++;
+            } else {
+                if (count > 1) {
+                    compressed.append(count);
+                }
+                compressed.append(current);
+                current = raw.charAt(i);
+                count = 1;
+            }
+        }
+        // 添加最后一组
+        if (count > 1) {
+            compressed.append(count);
+        }
+        compressed.append(current);
+
+        return compressed.toString();
     }
 
     private boolean deserializeBoardState(String state) {
@@ -677,7 +712,37 @@ public final class GomokuClientController {
                 return false;
             }
             int moveNo = Integer.parseInt(parts[0]);
-            String boardData = parts[1];
+            String compressedData = parts[1];
+
+            // 解压游程编码
+            StringBuilder decompressed = new StringBuilder();
+            int i = 0;
+            while (i < compressedData.length()) {
+                char c = compressedData.charAt(i);
+                if (Character.isDigit(c)) {
+                    // 读取数字
+                    StringBuilder numStr = new StringBuilder();
+                    while (i < compressedData.length() && Character.isDigit(compressedData.charAt(i))) {
+                        numStr.append(compressedData.charAt(i));
+                        i++;
+                    }
+                    int count = Integer.parseInt(numStr.toString());
+                    // 读取字符
+                    if (i < compressedData.length()) {
+                        char stone = compressedData.charAt(i);
+                        for (int j = 0; j < count; j++) {
+                            decompressed.append(stone);
+                        }
+                        i++;
+                    }
+                } else {
+                    // 单个字符
+                    decompressed.append(c);
+                    i++;
+                }
+            }
+
+            String boardData = decompressed.toString();
             if (boardData.length() != GomokuBoard.SIZE * GomokuBoard.SIZE) {
                 return false;
             }

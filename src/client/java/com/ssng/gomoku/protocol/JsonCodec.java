@@ -21,7 +21,9 @@ public final class JsonCodec {
             builder.append("null");
         } else if (value instanceof String string) {
             builder.append('"').append(escape(string)).append('"');
-        } else if (value instanceof Number || value instanceof Boolean) {
+        } else if (value instanceof Number number) {
+            writeNumber(builder, number);
+        } else if (value instanceof Boolean) {
             builder.append(value);
         } else if (value instanceof Map<?, ?> map) {
             builder.append('{');
@@ -77,6 +79,16 @@ public final class JsonCodec {
             }
         }
         return builder.toString();
+    }
+
+    private static void writeNumber(StringBuilder builder, Number number) {
+        if (number instanceof Double d && !Double.isFinite(d)) {
+            throw new IllegalArgumentException("non-finite number");
+        }
+        if (number instanceof Float f && !Float.isFinite(f)) {
+            throw new IllegalArgumentException("non-finite number");
+        }
+        builder.append(number);
     }
 
     private static final class Parser {
@@ -162,6 +174,9 @@ public final class JsonCodec {
                 if (c == '"') {
                     return builder.toString();
                 }
+                if (c < 0x20) {
+                    throw error("unescaped control character");
+                }
                 if (c != '\\') {
                     builder.append(c);
                     continue;
@@ -197,17 +212,51 @@ public final class JsonCodec {
             if (peek('-')) {
                 index++;
             }
-            while (index < json.length() && Character.isDigit(json.charAt(index))) {
-                index++;
+            if (index >= json.length()) {
+                throw error("expected digit");
             }
-            if (peek('.')) {
+            if (peek('0')) {
                 index++;
+                if (index < json.length() && Character.isDigit(json.charAt(index))) {
+                    throw error("leading zero");
+                }
+            } else if (isDigitOneToNine(json.charAt(index))) {
                 while (index < json.length() && Character.isDigit(json.charAt(index))) {
                     index++;
                 }
-                return Double.parseDouble(json.substring(start, index));
+            } else {
+                throw error("expected digit");
             }
-            return Long.parseLong(json.substring(start, index));
+            boolean floating = false;
+            if (peek('.')) {
+                floating = true;
+                index++;
+                if (index >= json.length() || !Character.isDigit(json.charAt(index))) {
+                    throw error("expected fraction digit");
+                }
+                while (index < json.length() && Character.isDigit(json.charAt(index))) {
+                    index++;
+                }
+            }
+            if (peek('e') || peek('E')) {
+                floating = true;
+                index++;
+                if (peek('+') || peek('-')) {
+                    index++;
+                }
+                if (index >= json.length() || !Character.isDigit(json.charAt(index))) {
+                    throw error("expected exponent digit");
+                }
+                while (index < json.length() && Character.isDigit(json.charAt(index))) {
+                    index++;
+                }
+            }
+            String raw = json.substring(start, index);
+            return floating ? Double.parseDouble(raw) : Long.parseLong(raw);
+        }
+
+        private boolean isDigitOneToNine(char c) {
+            return c >= '1' && c <= '9';
         }
 
         private Object parseLiteral(String literal, Object value) {
