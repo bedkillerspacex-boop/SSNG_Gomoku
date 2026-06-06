@@ -1003,4 +1003,8 @@ public final class GomokuClientController {
     public boolean isUserOnline(String username) {
         return onlineUsers.contains(username);
     }
+
+    public long stateDeadlineMs() {
+        return stateDeadlineMs;
+    }
 }

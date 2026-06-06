@@ -157,19 +157,38 @@ public final class GomokuScreen extends Screen {
 
         // 动态更新按钮和输入框状态
         boolean isPlaying = controller.status() == MatchStatus.PLAYING;
+        boolean isInviting = controller.status() == MatchStatus.INVITING;
 
-        if (inviteButton != null) {
-            inviteButton.active = !isPlaying;
+        // 计算邀请倒计时
+        int remainingSeconds = 0;
+        if (isInviting && controller.stateDeadlineMs() > 0) {
+            long remaining = controller.stateDeadlineMs() - System.currentTimeMillis();
+            remainingSeconds = Math.max(0, (int) Math.ceil(remaining / 1000.0));
         }
+
+        // 更新邀请按钮文字和状态
+        if (inviteButton != null) {
+            if (isInviting) {
+                inviteButton.setMessage(Text.literal("已邀请，等待" + remainingSeconds + "秒"));
+                inviteButton.active = false;
+            } else {
+                inviteButton.setMessage(Text.literal("邀请"));
+                inviteButton.active = !isPlaying;
+            }
+        }
+
         if (acceptButton != null) {
             acceptButton.active = !isPlaying;
         }
         if (declineButton != null) {
             declineButton.active = !isPlaying;
         }
+
+        // 邀请期间禁用选人按钮
         if (peerNameButton != null) {
-            peerNameButton.active = !isPlaying;
+            peerNameButton.active = !isPlaying && !isInviting;
         }
+
         if (localName != null) {
             localName.setEditable(!isPlaying);
         }
